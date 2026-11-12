@@ -545,7 +545,7 @@ footer .disc{font-size:.7rem;line-height:1.85;max-width:820px;margin-top:2.25rem
         <img class="logo" data-a="2c871532-6d13-4252-b7c2-027a3586d42d/godrej-florenne-logo.png" alt="Godrej Properties Florenne, Off Soukya Road">
         <h1>Godrej Florenne</h1>
         <p class="hero-title">A Private<br><em>French-Inspired</em> Residence</p>
-        <p class="hero-price">4, 5 BHK Row Villas Start from <b>₹ 4.85 CR*</b></p>
+        <p class="hero-price">4, 5 BHK Row Villas Start from <b>₹ 5.40 CR*</b></p>
         <p class="hero-sub">Off Soukya Road, Whitefield</p>
         <button type="button" class="eoi" data-enquire="EOI Window Is Live"><svg class="ic"><use href="#i-spark"/></svg>EOI Window Is Live<svg class="ic"><use href="#i-arrow"/></svg></button>
       </div>
@@ -573,7 +573,7 @@ footer .disc{font-size:.7rem;line-height:1.85;max-width:820px;margin-top:2.25rem
       <div class="hl-grid">
         <div class="hl"><div class="circ"><svg class="ic"><use href="#i-leaf"/></svg></div><div><b>20 Acres</b><span>Low-density community</span></div></div>
         <div class="hl"><div class="circ"><svg class="ic"><use href="#i-spark"/></svg></div><div><b>Hafeez Contractor</b><span>Architecture</span></div></div>
-        <div class="hl"><div class="circ"><svg class="ic"><use href="#i-expand"/></svg></div><div><b>3,725 – 5,524</b><span>Sq. Ft. Residences</span></div></div>
+        <div class="hl"><div class="circ"><svg class="ic"><use href="#i-expand"/></svg></div><div><b>3,700 – 5,500</b><span>Sq. Ft. Residences</span></div></div>
         <div class="hl"><div class="circ"><svg class="ic"><use href="#i-home"/></svg></div><div><b>Garden · Rooftop · Lift</b><span>Private to every home</span></div></div>
       </div>
       <div class="hl-foot">
@@ -587,7 +587,7 @@ footer .disc{font-size:.7rem;line-height:1.85;max-width:820px;margin-top:2.25rem
     <div class="wrap">
       <div class="head"><h2>Floor Plans &amp; Pricing</h2><p>Choose from four thoughtfully planned configurations with generous proportions and private outdoor spaces.</p></div>
       <table class="ptable" aria-label="Godrej Florenne area and pricing">
-        <thead><tr><th>Type</th><th>Area</th><th>Price (Onwards)</th><th><span style="position:absolute;clip:rect(0 0 0 0)">Floor plan</span></th></tr></thead>
+        <thead><tr><th>Type</th><th>Villa Size</th><th>Approx. All-Inclusive Price (Onwards)</th><th><span style="position:absolute;clip:rect(0 0 0 0)">Floor plan</span></th></tr></thead>
         <tbody id="prow"></tbody>
       </table>
       <div class="pcards" id="pcards"></div>
@@ -625,7 +625,7 @@ footer .disc{font-size:.7rem;line-height:1.85;max-width:820px;margin-top:2.25rem
     <div class="wrap">
       <div class="head"><h2>Project Walkthrough</h2><p>Step inside Godrej Florenne — a guided film through the architecture, residences, landscaped spaces and private outdoor living.</p></div>
       <button class="video" data-enquire="Project Walkthrough" aria-label="Open enquiry form for project walkthrough">
-        <img data-a="1b6d936c-f80a-46b7-a613-f851c0048c61/florenne-facade.png" alt="Godrej Florenne project walkthrough" loading="lazy">
+        <img src="assets/gal-facade.jpg" alt="Godrej Florenne project walkthrough" loading="lazy">
         <span class="play"><i><svg class="ic"><use href="#i-play"/></svg></i><span>View Now</span></span>
       </button>
       <p class="note">Video is illustrative and for representational purposes only.</p>
@@ -737,7 +737,7 @@ const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelect
 const ic=n=>`<svg class="ic"><use href="#i-${n}"/></svg>`;
 
 /* ---------- Content data (edit here) ---------- */
-const PLANS=[["4 Bed Optima","3,725 Sq. Ft.","₹ 4.85 Cr*"],["4 Bed Premia","4,060 Sq. Ft.","₹ 5.10 Cr*"],["4 Bed Luxe","4,515 Sq. Ft.","₹ 5.69 Cr*"],["5 Bed Luxe","5,524 Sq. Ft.","₹ 6.77 Cr*"]];
+const PLANS=[["4 BHK Optima","3,700 Sq. Ft.","₹ 5.40 Cr*"],["4 BHK Premia","4,000 Sq. Ft.","₹ 5.85 Cr*"],["4 BHK Luxe","4,500 Sq. Ft.","₹ 6.55 Cr*"],["5 BHK Luxe","5,500 Sq. Ft.","₹ 8.00 Cr*"]];
 const AMENITIES=[
  ["Lifestyle","spark",["Grand Clubhouse","Swimming Pool","Amphitheatre","Gazebos"]],
  ["Wellness & Fitness","heart",["Gymnasium","Outdoor Fitness","Walking & Jogging","Wellness Areas"]],
@@ -755,7 +755,7 @@ const LCATS=[["All Nearby","pin"],["Connectivity","expand"],["Work Hubs","buildi
 /* ---------- Render ---------- */
 const costBtn=n=>`<button class="btn btn-primary btn-sm" data-enquire="Complete Costing Details" data-interest="${n}">Complete Costing Details${ic('arrow')}</button>`;
 $('#prow').innerHTML=PLANS.map(p=>`<tr><td>${p[0]}</td><td>${p[1]}</td><td>${p[2]}</td><td>${costBtn(p[0])}</td></tr>`).join('');
-$('#pcards').innerHTML=PLANS.map(p=>`<article><h3>${p[0]}</h3><dl><dt>Area</dt><dd>${p[1]}</dd><dt>Price (Onwards)</dt><dd>${p[2]}</dd></dl>${costBtn(p[0])}</article>`).join('');
+$('#pcards').innerHTML=PLANS.map(p=>`<article><h3>${p[0]}</h3><dl><dt>Villa Size</dt><dd>${p[1]}</dd><dt>Approx. All-Incl. Price</dt><dd>${p[2]}</dd></dl>${costBtn(p[0])}</article>`).join('');
 $('#amrail').innerHTML=AMENITIES.map(a=>`<article class="am"><h3><i>${ic(a[1])}</i>${a[0].replace('&','&amp;')}</h3><ul>${a[2].map(x=>`<li>${ic('dot')}${x}</li>`).join('')}</ul></article>`).join('');
 let gi=0;
 function showShot(i){
@@ -840,6 +840,18 @@ function junkPhone(n){
   }
   return false;
 }
+const JUNK_MAIL=new Set(['mailinator.com','yopmail.com','tempmail.com','temp-mail.org','guerrillamail.com','10minutemail.com','trashmail.com','sharklasers.com','getnada.com','maildrop.cc','dispostable.com','fakeinbox.com','throwawaymail.com','example.com','test.com','email.com','abc.com','xyz.com','asdf.com','gmail.co','gmial.com','gmai.com','gamil.com','gnail.com','yahooo.com','yaho.com','hotmial.com']);
+function junkEmail(e){
+  const m=e.trim().toLowerCase().match(/^([a-z0-9._%+-]+)@([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})$/);
+  if(!m) return true;
+  const user=m[1].replace(/[._+-]/g,'');
+  if(JUNK_MAIL.has(m[2])) return true;
+  if(user.length<2||new Set(user).size<2) return true;
+  if(JUNK_NAMES.has(user)||/^(test|asdf|qwerty|abc|xyz|demo|fake|dummy|noreply|none|na)\d*$/.test(user)) return true;
+  return false;
+}
+function sentBefore(phone){try{const t=JSON.parse(localStorage.getItem('florenne-sent')||'{}')[phone];return t&&Date.now()-t<864e5}catch(x){return false}}
+function markSent(phone){try{const o=JSON.parse(localStorage.getItem('florenne-sent')||'{}');o[phone]=Date.now();localStorage.setItem('florenne-sent',JSON.stringify(o))}catch(x){}}
 $$('.lead-form').forEach(f=>{
   const ph=f.elements.phone, cc=f.elements.country_code;
   const lim=()=>cc.value==='+91'?10:14;
@@ -870,7 +882,7 @@ $$('.lead-form').forEach(form=>form.addEventListener('submit',async e=>{
   if(!d.name||junkName(d.name)) return fail('Please enter your real full name (letters only).');
   if(cc==='+91'?!/^[6-9]\d{9}$/.test(local):!/^\d{6,14}$/.test(local)) return fail(cc==='+91'?'Please enter a valid 10-digit mobile number.':'Please enter a valid mobile number.');
   if(junkPhone(local)) return fail('This number doesn\'t look right. Please enter the mobile number we can reach you on.');
-  if(d.email&&!/^\S+@\S+\.\S+$/.test(d.email)) return fail('Please enter a valid email address.');
+  if(d.email&&junkEmail(d.email)) return fail('Please enter a valid email address, or leave it blank.');
   if(f.elements.configuration&&!d.configuration) return fail('Please choose a preferred configuration.');
   if(!d.consent) return fail('Please tick the box to agree to be contacted.');
   err.style.display='none';
@@ -881,7 +893,12 @@ $$('.lead-form').forEach(form=>form.addEventListener('submit',async e=>{
     source:walk?'Walkthrough - View Now':'Enquiry Popup',page_url:location.href,submitted_at:new Date().toISOString(),
     cta,interest,country_code:cc,consent:'yes'});
   ['utm_source','utm_medium','utm_campaign','utm_term','utm_content','gclid','fbclid'].forEach(k=>{if(q.get(k))body.set(k,q.get(k))});
+  if(sentBefore(phone)){                                // same number already submitted from this browser today: don't create a duplicate lead
+    try{sessionStorage.setItem('florenne-watch-video',walk?'1':'0');sessionStorage.setItem('florenne-lead','1')}catch(x){}
+    return location.assign(location.protocol==='file:'?'thank-you.html':'/thank-you');
+  }
   const btn=$('[type=submit]',f);btn.disabled=true;btn.style.opacity=.6;
+  markSent(phone);
   try{
     (navigator.sendBeacon&&navigator.sendBeacon(SITE.webhookUrl,body))||await fetch(SITE.webhookUrl,{method:'POST',mode:'no-cors',keepalive:true,
       headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:body.toString()});
