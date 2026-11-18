@@ -1,0 +1,651 @@
+/* Godrej Florenne (Off Soukya Road, Whitefield) landing page: behaviour.
+ * Lead forms, enquiry popup (auto + on click, intent-aware), gated floor plans,
+ * hero slider, lightbox, WhatsApp, mobile action bar, dataLayer events (no PII).
+ */
+(function () {
+  "use strict";
+
+  var CFG = window.SH_CONFIG || {};
+  var dl = (window.dataLayer = window.dataLayer || []);
+  function track(event, params) {
+    var payload = { event: event };
+    for (var k in params) if (Object.prototype.hasOwnProperty.call(params, k)) payload[k] = params[k];
+    dl.push(payload);
+  }
+  function ss(key, val) {
+    try {
+      if (val === undefined) return sessionStorage.getItem(key);
+      sessionStorage.setItem(key, val);
+    } catch (e) { return null; }
+  }
+
+  /* ---------- duplicate-enquiry guard ----------
+   * Remembers which phone numbers already enquired from this browser (localStorage, 30 days),
+   * so the same person re-submitting in a new tab, after a refresh, or from the popup + hero form
+   * is not sent to the webhook again. A different phone number is still accepted as a new lead. */
+  var LEAD_STORE = "gf_leads", LEAD_TTL = 30 * 24 * 3600 * 1000;
+  function readLeads() {
+    try {
+      var all = JSON.parse(localStorage.getItem(LEAD_STORE) || "{}") || {}, now = Date.now(), out = {};
+      for (var p in all) if (Object.prototype.hasOwnProperty.call(all, p) && now - all[p] < LEAD_TTL) out[p] = all[p];
+      return out;
+    } catch (e) { return {}; }
+  }
+  function rememberLead(phone) {
+    try { var all = readLeads(); all[phone] = Date.now(); localStorage.setItem(LEAD_STORE, JSON.stringify(all)); } catch (e) {}
+  }
+  function hasLead(phone) { return Object.prototype.hasOwnProperty.call(readLeads(), phone); }
+  function anyLead() { return Object.keys(readLeads()).length > 0; }
+  /* Enquiries sent from this browser in the last 24 hours (different numbers), to stop one device flooding the CRM. */
+  function recentLeadCount() {
+    var all = readLeads(), now = Date.now(), n = 0;
+    for (var p in all) if (now - all[p] < 24 * 3600 * 1000) n++;
+    return n;
+  }
+  function newLeadId() {
+    try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+    return "nn-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  }
+
+  /* ---------- config-driven content ---------- */
+  if (CFG.phoneE164) document.querySelectorAll(".js-phone").forEach(function (a) { a.href = "tel:" + CFG.phoneE164; });
+  if (CFG.phoneDisplay) {
+    var phoneNb = String(CFG.phoneDisplay).replace(/ /g, "\u00a0");
+    document.querySelectorAll(".js-phone-text").forEach(function (s) { s.textContent = phoneNb; });
+    document.querySelectorAll(".icon-btn.js-phone").forEach(function (a) { a.setAttribute("aria-label", "Call sales on " + CFG.phoneDisplay); });
+  }
+  if (CFG.privacyUrl) {
+    document.querySelectorAll(".js-privacy-link").forEach(function (s) {
+      var a = document.createElement("a"); a.href = CFG.privacyUrl; a.textContent = "Read the privacy policy."; a.rel = "noopener"; s.appendChild(a);
+    });
+  }
+  if (CFG.agentRera) document.querySelectorAll(".js-agent-rera").forEach(function (s) { s.textContent = " · Agent RERA: " + CFG.agentRera; });
+  if (CFG.whatsappNumber) {
+    var waHref = "https://wa.me/" + String(CFG.whatsappNumber).replace(/\D/g, "") + "?text=" + encodeURIComponent(CFG.whatsappMessage || "");
+    document.querySelectorAll(".js-whatsapp").forEach(function (a) { a.href = waHref; a.hidden = false; });
+  }
+  // Canonical URL: set SH_CONFIG.siteUrl once the domain is final; otherwise use the live URL without query/hash.
+  if (!document.querySelector('link[rel="canonical"]') && /^https?:$/.test(location.protocol)) {
+    var can = document.createElement("link"); can.rel = "canonical";
+    can.href = CFG.siteUrl || (location.origin + location.pathname);
+    document.head.appendChild(can);
+  }
+
+  if (/[?&]review=1\b/.test(location.search)) document.documentElement.classList.add("review-mode");
+
+  /* ---------- attribution (UTMs + click IDs), kept for the session ---------- */
+  var ATTR_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "gbraid", "wbraid", "fbclid", "msclkid"];
+  var attribution = {};
+  try { attribution = JSON.parse(ss("ss_attr") || "{}") || {}; } catch (e) { attribution = {}; }
+  var qs = new URLSearchParams(location.search);
+  var fresh = false;
+  ATTR_KEYS.forEach(function (k) { var v = qs.get(k); if (v) { attribution[k] = v.slice(0, 200); fresh = true; } });
+  if (fresh || !attribution.landing_page) {
+    attribution.landing_page = attribution.landing_page || location.href.split("#")[0];
+    attribution.referrer = attribution.referrer || document.referrer || "";
+    ss("ss_attr", JSON.stringify(attribution));
+  }
+
+  /* ---------- state ---------- */
+  var pageLoadedAt = Date.now();
+  var submitted = ss("ss_lead") === "1" || anyLead(); // already enquired from this browser
+  var sending = false; // one request in flight across all forms (hero, popup, inline)
+  var anyFormStarted = false;
+  var modalIntent = "general";
+
+  var INTENTS = {
+    general:    { title: "Get price sheet & floor plans", button: "Get Price Sheet & Floor Plans" },
+    price:      { title: "Get the complete price sheet", button: "Send Me the Price Sheet" },
+    brochure:   { title: "Download the e-brochure", button: "Send Me the Brochure" },
+    floor_plan: { title: "Download the floor plans", button: "Send Me the Floor Plans" },
+    site_visit: { title: "Book your private site visit", button: "Reserve My Visit Slot" },
+    callback:   { title: "Request a call back", button: "Call Me Back" },
+    walkthrough: { title: "Watch the project walkthrough", button: "Watch the Walkthrough" },
+    master_plan: { title: "Unlock the master plan", button: "Send Me the Master Plan" }
+  };
+
+  function unlockPlans() { return; /* Godrej Florenne: the clear master plan is shown only on the thank-you page */
+    document.querySelectorAll(".fp-grid").forEach(function (g) { g.classList.add("is-unlocked"); });
+    document.querySelectorAll(".fp-lock").forEach(function (l) { l.remove(); });
+    document.querySelectorAll(".js-plan.is-locked").forEach(function (b) { b.classList.remove("is-locked"); });
+  }
+  if (submitted) unlockPlans();
+
+  /* ---------- lead forms ---------- */
+  var tpl = document.getElementById("lead-form-tpl");
+
+  /* Rejects junk numbers: all-same digits, runs like 1234567890 / 9876543210,
+   * fewer than 4 distinct digits, one digit repeated 7+ times, or repeated pairs (9898989898). */
+  function looksJunk(d) {
+    if (/^(\d)\1+$/.test(d)) return true;
+    if ("01234567890123456789".indexOf(d) > -1 || "98765432109876543210".indexOf(d) > -1) return true;
+    var uniq = {}; for (var i = 0; i < d.length; i++) uniq[d.charAt(i)] = (uniq[d.charAt(i)] || 0) + 1;
+    if (Object.keys(uniq).length < 4) return true;
+    for (var k in uniq) if (uniq[k] >= 7) return true;
+    if (/^(\d{2})\1{3,}/.test(d) || /^(\d{3})\1{2,}/.test(d)) return true;
+    if (/(\d)\1{5,}/.test(d)) return true;
+    return false;
+  }
+  /* Mobile-number shape per country code offered in the form: length and leading digit(s). */
+  var INTL = {
+    "+971": { len: 9, re: /^5/ }, "+966": { len: 9, re: /^5/ }, "+974": { len: 8, re: /^[3567]/ },
+    "+965": { len: 8, re: /^[569]/ }, "+968": { len: 8, re: /^[79]/ }, "+973": { len: 8, re: /^[36]/ },
+    "+1": { len: 10, re: /^[2-9]\d{2}[2-9]/ }, "+44": { len: 10, re: /^7/ },
+    "+65": { len: 8, re: /^[89]/ }, "+61": { len: 9, re: /^4/ }
+  };
+  function phoneValid(cc, digits) {
+    if (cc === "+91") return /^[6-9]\d{9}$/.test(digits) && !looksJunk(digits);
+    var rule = INTL[cc];
+    if (rule) return digits.length === rule.len && rule.re.test(digits) && !looksJunk(digits);
+    return /^\d{7,14}$/.test(digits) && !looksJunk(digits);
+  }
+
+  /* Name: letters only (Latin or Indian scripts), at least 3 letters, and not a placeholder or keyboard mash. */
+  var NAME_OK = /^[A-Za-zऀ-ൿ][A-Za-zऀ-ൿ .'\-]*$/;
+  var JUNK_WORDS = /^(test|testing|tester|tests|asdf|asd|qwerty|abc|abcd|abcde|xyz|demo|sample|fake|dummy|none|null|nil|name|noname|user|admin|hello|hi|hey|unknown|anonymous|anon|lead|enquiry|enquire|nothing|nobody|someone|anyone|check|checking|trial|temp|xxx|aaa|zzz)$/;
+  var MASH = /(asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|wert|erty|rtyu|tyui|yuio|uiop|zxcv|xcvb|cvbn|vbnm|qaz|wsx|lkjh|poiu|mnbv)/;
+  function nameProblem(name) {
+    var n = name.replace(/\s+/g, " ");
+    if (!NAME_OK.test(n)) return "Please enter your name using letters only.";
+    var letters = n.replace(/[^A-Za-zऀ-ൿ]/g, "");
+    if (letters.length < 3) return "Please enter your full name.";
+    if (/(.)\1\1/i.test(letters)) return "Please enter your real name.";
+    if (/^[A-Za-z]+$/.test(letters)) {
+      var low = n.toLowerCase(), words = low.split(/[ .'\-]+/).filter(Boolean);
+      for (var i = 0; i < words.length; i++) if (JUNK_WORDS.test(words[i])) return "Please enter your real name.";
+      var flat = letters.toLowerCase();
+      if (!/[aeiouy]/.test(flat) || /[bcdfghjklmnpqrstvwxz]{5,}/.test(flat) || MASH.test(flat)) return "Please enter your real name.";
+      if (/^(.{1,3})\1+$/.test(flat)) return "Please enter your real name.";
+    }
+    return "";
+  }
+
+  /* Email is optional, but if given it must look real: proper shape, no throwaway inbox, no placeholder, no common typo. */
+  var EMAIL_OK = /^[a-z0-9](?:[a-z0-9._%+\-]*[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,}$/;
+  var EMAIL_TYPOS = {
+    "gmial.com": "gmail.com", "gmai.com": "gmail.com", "gmail.co": "gmail.com", "gmail.con": "gmail.com", "gmail.cm": "gmail.com",
+    "gamil.com": "gmail.com", "gnail.com": "gmail.com", "gmal.com": "gmail.com", "gmaill.com": "gmail.com", "gmail.om": "gmail.com",
+    "yaho.com": "yahoo.com", "yahooo.com": "yahoo.com", "yahoo.con": "yahoo.com", "yhoo.com": "yahoo.com",
+    "hotmial.com": "hotmail.com", "hotmai.com": "hotmail.com", "hotmail.con": "hotmail.com",
+    "outlok.com": "outlook.com", "outlook.con": "outlook.com", "redifmail.com": "rediffmail.com"
+  };
+  var EMAIL_BLOCKED = /^(mailinator\.com|yopmail\.com|guerrillamail\.(com|net|org)|sharklasers\.com|10minutemail\.(com|net)|tempmail\.(com|net|org)|temp-mail\.(org|io)|trashmail\.com|getnada\.com|dispostable\.com|maildrop\.cc|throwawaymail\.com|fakeinbox\.com|mailnesia\.com|mintemail\.com|moakt\.com|emailondeck\.com|example\.(com|org|net)|test\.com|testing\.com|abc\.com|xyz\.com|email\.test|domain\.com|mail\.test)$/;
+  var EMAIL_JUNK_LOCAL = /^(test|testing|tester|abc|abcd|asdf|asd|qwerty|xyz|demo|sample|fake|dummy|none|null|nil|na|no|noemail|nomail|email|mail|user|admin|example|a+|x+|z+|\d{1,4})$/;
+  function emailProblem(email) {
+    var e = email.toLowerCase();
+    if (!EMAIL_OK.test(e) || /\.\./.test(e)) return "Please enter a valid email address, or leave it blank.";
+    var at = e.lastIndexOf("@"), local = e.slice(0, at), domain = e.slice(at + 1);
+    if (EMAIL_TYPOS[domain]) return "Did you mean " + local + "@" + EMAIL_TYPOS[domain] + "?";
+    if (EMAIL_BLOCKED.test(domain) || EMAIL_JUNK_LOCAL.test(local) || MASH.test(local) || local === domain.split(".")[0]) return "Please enter a real email address, or leave it blank.";
+    return "";
+  }
+  function setError(form, name, msg) {
+    var input = form.querySelector('[name="' + name + '"]');
+    var err = form.querySelector('[data-err="' + name + '"]');
+    if (input) input.setAttribute("aria-invalid", msg ? "true" : "false");
+    if (err) err.textContent = msg || "";
+  }
+  function validate(form) {
+    var ok = true, first = null;
+    var name = form.elements.name.value.trim();
+    var cc = form.elements.cc.value;
+    var digits = form.elements.phone.value.replace(/\D/g, "");
+    if (cc === "+91" && digits.length === 12 && digits.indexOf("91") === 0) digits = digits.slice(2);
+    if (cc === "+91" && digits.length === 13 && digits.indexOf("091") === 0) digits = digits.slice(3);
+    if (cc === "+91" && digits.length === 11 && digits.charAt(0) === "0") digits = digits.slice(1);
+    if (cc !== "+91") {
+      var ccd = cc.slice(1), rule = INTL[cc];
+      if (rule && digits.length === ccd.length + rule.len && digits.indexOf(ccd) === 0) digits = digits.slice(ccd.length);
+      digits = digits.replace(/^0+/, "");
+    }
+    name = name.replace(/\s+/g, " ");
+    var nameErr = nameProblem(name);
+    if (nameErr) { setError(form, "name", nameErr); ok = false; first = first || form.elements.name; }
+    else setError(form, "name", "");
+    if (!phoneValid(cc, digits)) { setError(form, "phone", "Please enter a valid mobile number."); ok = false; first = first || form.elements.phone; }
+    else setError(form, "phone", "");
+    var email = (form.elements.email ? form.elements.email.value.trim() : "");
+    var emailErr = email ? emailProblem(email) : "";
+    if (emailErr) { setError(form, "email", emailErr); ok = false; first = first || form.elements.email; }
+    else setError(form, "email", "");
+    if (!form.elements.consent.checked) { setError(form, "consent", "Please tick the box so the sales team can contact you."); ok = false; first = first || form.elements.consent; }
+    else setError(form, "consent", "");
+    return { ok: ok, first: first, name: name, cc: cc, digits: digits, email: email };
+  }
+
+  function buildForm(slot) {
+    var formId = slot.getAttribute("data-form-id");
+    var frag = tpl.content.cloneNode(true);
+    frag.querySelectorAll("[id]").forEach(function (el) { el.id = el.id.replace("tpl", "lf-" + formId); });
+    frag.querySelectorAll("label[for]").forEach(function (el) { el.htmlFor = el.htmlFor.replace("tpl", "lf-" + formId); });
+    frag.querySelectorAll(".err").forEach(function (el) {
+      var field = el.id.replace("lf-" + formId + "-", "").replace("-err", "");
+      el.setAttribute("data-err", field);
+      var input = frag.querySelector('[name="' + field + '"]');
+      if (input) input.setAttribute("aria-describedby", el.id);
+    });
+    frag.querySelectorAll(".js-consent-entity").forEach(function (s) { s.textContent = CFG.consentEntity || "the developer and its authorised sales partners"; });
+    var form = frag.querySelector("form");
+    form.setAttribute("data-form-id", formId);
+    var label = slot.getAttribute("data-submit-label");
+    if (label) form.querySelector('button[type="submit"]').textContent = label;
+    slot.appendChild(frag);
+
+    var started = false;
+    form.addEventListener("focusin", function () {
+      anyFormStarted = true;
+      if (started) return; started = true;
+      track("form_start", { form_id: formId });
+    });
+    form.elements.phone.addEventListener("input", function (e) {
+      var v = e.target.value.replace(/[^\d\s+\-()]/g, ""); if (v !== e.target.value) e.target.value = v;
+    });
+    form.elements.name.addEventListener("input", function (e) {
+      if (e.isComposing) return;
+      var v = e.target.value.replace(/[0-9@#$%^&*_=+<>\/\\|~`!?:;"()\[\]{},]/g, ""); if (v !== e.target.value) e.target.value = v;
+    });
+    form.addEventListener("submit", function (e) { e.preventDefault(); handleSubmit(form, formId); });
+    return form;
+  }
+
+  function intentFor(formId) {
+    if (formId === "modal") return modalIntent;
+    if (formId === "hero" || formId === "hero-m") return "site_visit";
+    if (formId === "inline") return "brochure";
+    return "general";
+  }
+
+  function handleSubmit(form, formId) {
+    var btn = form.querySelector('button[type="submit"]');
+    var status = form.querySelector(".form-status");
+    if (btn.disabled || sending) return;
+    status.textContent = ""; status.className = "form-status";
+
+    var v = validate(form);
+    if (!v.ok) { track("form_error", { form_id: formId }); if (v.first) v.first.focus(); return; }
+
+    if (form.elements.company.value || Date.now() - pageLoadedAt < 2500) {
+      track("form_blocked", { form_id: formId });
+      showError(form, "We couldn't send that. Please try again in a moment.");
+      return;
+    }
+
+    var intent = intentFor(formId);
+    var config = form.getAttribute("data-config") || "";
+    track("form_submit", { form_id: formId, intent: intent, configuration: config || "not_specified" });
+
+    var phoneKey = v.cc + v.digits;
+    if (hasLead(phoneKey)) {
+      track("lead_duplicate_blocked", { form_id: formId, intent: intent });
+      showSuccess(form, v.name, true, intent);
+      return;
+    }
+    if (recentLeadCount() >= 3) {
+      track("form_blocked", { form_id: formId, reason: "rate_limit" });
+      showError(form, "We've already received your enquiry. Our team will contact you shortly.");
+      return;
+    }
+
+    if (!CFG.leadEndpoint) {
+      console.warn("[GodrejFlorenne] SH_CONFIG.leadEndpoint is empty, so the lead was NOT sent. Configure it in assets/js/config.js.");
+      track("lead_submit_error", { form_id: formId, reason: "no_endpoint" });
+      showError(form, "We couldn't send that right now. Please try again later.");
+      return;
+    }
+
+    var leadId = newLeadId();
+    /* Field names match what the Pabbly workflow already maps (name, phone, email, configuration, source,
+     * page_url, submitted_at, cta, interest, country_code, consent); the rest are extras. */
+    var payload = {
+      name: v.name,
+      phone: v.cc === "+91" ? v.digits : v.cc + v.digits,
+      email: v.email,
+      configuration: config,
+      source: intent === "walkthrough" ? "Walkthrough - View Now" : "Enquiry Popup",
+      page_url: location.href.split("#")[0],
+      submitted_at: new Date().toISOString(),
+      cta: INTENTS[intent] ? INTENTS[intent].title : intent,
+      interest: config,
+      country_code: v.cc,
+      consent: "yes",
+      lead_id: leadId,
+      project: "Godrej Florenne",
+      intent: intent,
+      form_id: formId
+    };
+    ATTR_KEYS.concat(["landing_page", "referrer"]).forEach(function (k) { if (attribution[k]) payload[k] = attribution[k]; });
+
+    btn.disabled = true; sending = true;
+    var label = btn.textContent;
+    btn.textContent = "Sending…";
+    var controller = "AbortController" in window ? new AbortController() : null;
+    var timer = setTimeout(function () { if (controller) controller.abort(); }, 15000);
+
+    var mode = CFG.leadEndpointMode || "json";
+    var req = { method: "POST", signal: controller ? controller.signal : undefined };
+    if (mode === "form") {
+      /* URL-encoded form post: no CORS preflight, and webhook tools (Pabbly, Zapier, Make) map each key as a field.
+       * no-cors because these listeners don't send CORS headers; a network failure still rejects. */
+      var fd = new URLSearchParams();
+      Object.keys(payload).forEach(function (k) { fd.append(k, payload[k] == null ? "" : String(payload[k])); });
+      req.mode = "no-cors";
+      req.headers = { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" };
+      req.body = fd.toString();
+    } else {
+      req.headers = { "Content-Type": CFG.leadEndpointSimpleRequest ? "text/plain;charset=utf-8" : "application/json" };
+      req.body = JSON.stringify(payload);
+    }
+    fetch(CFG.leadEndpoint, req).then(function (res) {
+      clearTimeout(timer);
+      if (res.type !== "opaque" && !res.ok) throw new Error("HTTP " + res.status);
+      submitted = true; ss("ss_lead", "1"); rememberLead(phoneKey); unlockPlans();
+      track("lead_submit_success", { form_id: formId, intent: intent, configuration: config || "not_specified", lead_id: leadId });
+      // One-time pass for the thank-you page: it fires the conversion event only when this is present.
+      ss("florenne-lead", "1"); ss("florenne-watch-video", intent === "walkthrough" ? "1" : "0");
+      if (CFG.thankYouUrl) location.replace(location.protocol === "file:" ? "thank-you.html" : CFG.thankYouUrl); // replace: Back doesn't return to a filled form
+      else showSuccess(form, v.name, false, intent);
+    }).catch(function (err) {
+      clearTimeout(timer);
+      console.error("[GodrejFlorenne] lead submit failed", err);
+      track("lead_submit_error", { form_id: formId, reason: "network_or_server" });
+      btn.disabled = false; sending = false; btn.textContent = label;
+      showError(form, "Something went wrong sending your details. Please try again.");
+    });
+  }
+
+  /* Form messages never show a phone number. */
+  function showError(form, msg) {
+    var status = form.querySelector(".form-status");
+    status.className = "form-status is-error";
+    status.textContent = msg;
+  }
+
+  function showSuccess(form, name, repeat, intent) {
+    var first = name.split(/\s+/)[0];
+    var box = document.createElement("div");
+    box.className = "form-success"; box.setAttribute("role", "status"); box.setAttribute("tabindex", "-1");
+    var tick = document.createElement("div"); tick.className = "tick";
+    tick.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.4" d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    var h = document.createElement("h4"); h.textContent = "Thank you, " + first + ".";
+    var p = document.createElement("p");
+    p.textContent = repeat
+      ? "We already have your enquiry for this number, so there's no need to submit again. The Godrej Florenne sales team will be in touch."
+      : "We've received your details. The Godrej Florenne sales team will contact you shortly.";
+    box.appendChild(tick); box.appendChild(h); box.appendChild(p);
+    if (intent === "floor_plan" && plans.length) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "btn btn-dark"; b.textContent = "View floor plans";
+      b.addEventListener("click", function () { if (modal.open) modal.close(); if (plans.length) lbOpen(plans, plans[0]); });
+      box.appendChild(b);
+    }
+    if (intent === "brochure" && CFG.brochureUrl) {
+      var d = document.createElement("a"); d.className = "btn btn-dark"; d.href = CFG.brochureUrl; d.target = "_blank"; d.rel = "noopener"; d.textContent = "Download brochure";
+      d.addEventListener("click", function () { track("brochure_download", {}); });
+      box.appendChild(d);
+    }
+    form.replaceWith(box);
+    box.focus();
+  }
+
+  document.querySelectorAll(".js-form-slot").forEach(buildForm);
+
+  /* ---------- enquiry popup ---------- */
+  var modal = document.getElementById("enquiry-modal");
+  var modalTitle = modal.querySelector(".js-modal-title");
+
+  function openEnquiry(intent, config, source) {
+    modalIntent = INTENTS[intent] ? intent : "general";
+    modalTitle.textContent = INTENTS[modalIntent].title;
+    var form = modal.querySelector("form");
+    if (form) {
+      form.querySelector('button[type="submit"]').textContent = INTENTS[modalIntent].button;
+      if (config) form.setAttribute("data-config", config); else form.removeAttribute("data-config");
+    }
+    if (typeof modal.showModal !== "function") { document.getElementById("hero").scrollIntoView(); return; }
+    if (!modal.open) modal.showModal();
+    track("popup_open", { intent: modalIntent, source: source || "click" });
+    var firstInput = modal.querySelector("input[name=name]");
+    if (firstInput && source !== "auto") setTimeout(function () { firstInput.focus(); }, 30);
+  }
+  modal.addEventListener("click", function (e) {
+    if (e.target === modal || e.target.closest("[data-close]")) modal.close();
+  });
+  modal.addEventListener("close", function () { ss("ss_popup_seen", "1"); });
+
+  // Auto-open once per session, only if the visitor hasn't already engaged with a form.
+  var delay = Number(CFG.popupDelaySeconds);
+  var scrollPct = Number(CFG.popupScrollPercent);
+  if ((delay > 0 || scrollPct > 0 || CFG.popupExitIntent) && !submitted && ss("ss_popup_seen") !== "1") {
+    var autoDone = false;
+    var autoOpen = function (how) {
+      if (autoDone) return;
+      if (submitted || anyFormStarted || ss("ss_popup_seen") === "1") { autoDone = true; return; }
+      if (document.documentElement.classList.contains("ss-editing")) return;
+      if (document.querySelector("dialog[open]")) return;
+      autoDone = true;
+      openEnquiry("general", null, how);
+    };
+    if (delay > 0) setTimeout(function () { autoOpen("auto_timer"); }, delay * 1000);
+    if (scrollPct > 0) {
+      window.addEventListener("scroll", function () {
+        var max = document.documentElement.scrollHeight - window.innerHeight;
+        if (max > 0 && (window.scrollY / max) * 100 >= scrollPct) autoOpen("auto_scroll");
+      }, { passive: true });
+    }
+    if (CFG.popupExitIntent) {
+      document.addEventListener("mouseout", function (e) {
+        if (!e.relatedTarget && e.clientY <= 0) autoOpen("auto_exit");
+      });
+    }
+  }
+
+  /* ---------- CTA tracking + openers (delegated) ---------- */
+  document.addEventListener("click", function (e) {
+    var el = e.target.closest("[data-cta], .js-open-enquiry, a[href^='tel:'], a[href^='mailto:'], a[href*='wa.me']");
+    if (!el) return;
+    if (el.classList.contains("js-plan")) return; // tracked by the plan handler
+    var cta = el.getAttribute("data-cta") || "";
+    var href = el.getAttribute("href") || "";
+    if (href.indexOf("tel:") === 0) track("phone_click", { cta_location: cta || "inline" });
+    else if (href.indexOf("mailto:") === 0) track("email_click", { cta_location: cta || "inline" });
+    else if (href.indexOf("wa.me") > -1) {
+      track("whatsapp_click", { cta_location: cta || "inline" });
+    }
+    else if (cta) track("cta_click", { cta_location: cta, cta_label: (el.textContent || "").trim().slice(0, 60) });
+    if (el.classList.contains("js-open-enquiry")) {
+      e.preventDefault();
+      openEnquiry(el.getAttribute("data-intent") || "general", el.getAttribute("data-config"), "click");
+    }
+  });
+
+  /* ---------- lightbox ---------- */
+  var lb = document.getElementById("lightbox");
+  var lbImg = lb.querySelector("img");
+  var lbCap = lb.querySelector("figcaption");
+  var lbItems = [], lbIndex = 0;
+  function lbShow(i) {
+    lbIndex = (i + lbItems.length) % lbItems.length;
+    var el = lbItems[lbIndex];
+    lbImg.src = el.getAttribute("data-full");
+    var cap = el.getAttribute("data-caption") || "";
+    lbImg.alt = cap; lbCap.textContent = cap;
+  }
+  function lbOpen(items, el) {
+    lbItems = items; lbShow(items.indexOf(el));
+    track("image_view", { image: el.getAttribute("data-caption") || "" });
+    if (typeof lb.showModal === "function") lb.showModal(); else window.open(el.getAttribute("data-full"), "_blank");
+  }
+  document.querySelectorAll(".js-lightbox").forEach(function (el) {
+    el.addEventListener("click", function () { lbOpen(Array.prototype.slice.call(document.querySelectorAll(".js-lightbox")), el); });
+  });
+  lb.querySelector(".lb-prev").addEventListener("click", function () { lbShow(lbIndex - 1); });
+  lb.querySelector(".lb-next").addEventListener("click", function () { lbShow(lbIndex + 1); });
+  lb.addEventListener("click", function (e) { if (e.target === lb || e.target.closest("[data-close]")) lb.close(); });
+  lb.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowRight") lbShow(lbIndex + 1);
+    if (e.key === "ArrowLeft") lbShow(lbIndex - 1);
+  });
+
+  /* ---------- gated floor plans ---------- */
+  var plans = Array.prototype.slice.call(document.querySelectorAll(".js-plan"));
+  function onPlan(thumb) {
+    track("cta_click", { cta_location: thumb.getAttribute("data-cta") || "plan", cta_label: "View Plan" });
+    if (submitted) location.assign(location.protocol === "file:" ? "thank-you.html" : (CFG.thankYouUrl || "thank-you.html")); /* the clear plan lives on the thank-you page */
+    else openEnquiry(thumb.getAttribute("data-cta") === "plan_master" ? "master_plan" : "floor_plan", null, "plan");
+  }
+  plans.forEach(function (thumb) {
+    thumb.addEventListener("click", function () { onPlan(thumb); });
+    var link = thumb.parentElement.querySelector(".js-plan-link");
+    if (link) link.addEventListener("click", function () { onPlan(thumb); });
+  });
+
+  /* ---------- hero slider ---------- */
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".hero-slides .slide"));
+  var dots = Array.prototype.slice.call(document.querySelectorAll(".slide-dots button"));
+  var cur = 0, timerId = null;
+  var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function hydrate(s) {
+    s.querySelectorAll("[data-srcset]").forEach(function (x) { x.srcset = x.getAttribute("data-srcset"); x.removeAttribute("data-srcset"); });
+    s.querySelectorAll("[data-src]").forEach(function (x) { x.src = x.getAttribute("data-src"); x.removeAttribute("data-src"); });
+  }
+  function go(i) {
+    cur = (i + slides.length) % slides.length;
+    hydrate(slides[cur]); hydrate(slides[(cur + 1) % slides.length]);
+    slides.forEach(function (s, j) { s.classList.toggle("is-active", j === cur); });
+    dots.forEach(function (d, j) { d.setAttribute("aria-pressed", j === cur ? "true" : "false"); });
+  }
+  function start() { if (!reduced && slides.length > 1) timerId = setInterval(function () { go(cur + 1); }, 5500); }
+  dots.forEach(function (d, j) { d.addEventListener("click", function () { clearInterval(timerId); go(j); start(); }); });
+  window.addEventListener("load", function () { if (slides[1]) hydrate(slides[1]); start(); });
+
+  /* ---------- walkthrough videos (click-to-play, no YouTube load until clicked) ---------- */
+  /* ---------- walkthrough: videos play inside the page ----------
+   * The large frame is the player. Clicking any thumbnail loads that video into it
+   * (side videos swap in, the page scrolls the player into view). Never opens a new tab. */
+  var mainThumb = document.querySelector(".video-main .video-thumb");
+  var vTitle = document.querySelector(".js-video-title");
+  var vDesc = document.querySelector(".js-video-desc");
+  var vFallback = document.querySelector(".video-fallback");
+  var vYt = document.querySelector(".js-video-yt");
+  function playVideo(id, title, desc) {
+    if (!mainThumb || !id) return;
+    var f = document.createElement("iframe");
+    f.src = "https://www.youtube.com/embed/" + id + "?autoplay=1&rel=0&modestbranding=1&playsinline=1";
+    f.title = (title || "Godrej Florenne") + " video";
+    f.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+    f.setAttribute("allowfullscreen", "");
+    f.referrerPolicy = "strict-origin-when-cross-origin";
+    mainThumb.innerHTML = "";
+    mainThumb.appendChild(f);
+    mainThumb.classList.add("is-playing");
+    mainThumb.removeAttribute("href");
+    mainThumb.removeAttribute("aria-label");
+    mainThumb.setAttribute("role", "presentation");
+    if (vTitle && title) vTitle.textContent = title;
+    if (vDesc) vDesc.textContent = desc || "";
+    if (vYt) vYt.href = "https://www.youtube.com/watch?v=" + id;
+    if (vFallback) vFallback.hidden = false;
+    document.querySelectorAll(".video-side .js-video").forEach(function (t) {
+      var on = t.getAttribute("data-yt") === id;
+      t.classList.toggle("is-active", on);
+      if (on) t.setAttribute("aria-current", "true"); else t.removeAttribute("aria-current");
+    });
+  }
+  document.querySelectorAll(".js-video").forEach(function (el) {
+    el.addEventListener("click", function (e) {
+      if (!el.getAttribute("data-yt")) return;
+      e.preventDefault();
+      var id = el.getAttribute("data-yt"), title = el.getAttribute("data-title");
+      track("video_play", { video: title || id });
+      playVideo(id, title, el.getAttribute("data-desc"));
+      if (el !== mainThumb) {
+        var r = mainThumb.getBoundingClientRect();
+        if (r.top < 70 || r.bottom > window.innerHeight) {
+          mainThumb.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }
+    });
+  });
+
+  /* ---------- mobile menu ---------- */
+  var menuBtn = document.querySelector(".menu-btn");
+  var nav = document.getElementById("site-nav");
+  if (menuBtn && nav) {
+    var setMenu = function (open) {
+      menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+      menuBtn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+      document.documentElement.classList.toggle("menu-open", open);
+    };
+    menuBtn.addEventListener("click", function () { setMenu(menuBtn.getAttribute("aria-expanded") !== "true"); });
+    nav.addEventListener("click", function (e) { if (e.target.closest("a")) setMenu(false); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && menuBtn.getAttribute("aria-expanded") === "true") { setMenu(false); menuBtn.focus(); } });
+    document.addEventListener("click", function (e) { if (!e.target.closest(".site-header")) setMenu(false); });
+    window.addEventListener("resize", function () { if (window.innerWidth >= 1100) setMenu(false); });
+  }
+
+  /* ---------- swipe rows ---------- */
+  document.querySelectorAll(".js-prev, .js-next").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var row = document.getElementById(btn.getAttribute("data-target"));
+      if (!row) return;
+      var item = row.firstElementChild;
+      var step = item ? item.getBoundingClientRect().width + 16 : row.clientWidth * 0.8;
+      row.scrollBy({ left: btn.classList.contains("js-next") ? step : -step, behavior: "smooth" });
+    });
+  });
+
+
+
+  /* ---------- amenity tabs ---------- */
+  var amTabs = Array.prototype.slice.call(document.querySelectorAll(".am-tab"));
+  amTabs.forEach(function (t) {
+    t.addEventListener("click", function () {
+      amTabs.forEach(function (o) { o.classList.toggle("is-active", o === t); o.setAttribute("aria-selected", o === t ? "true" : "false"); });
+      document.querySelectorAll(".am-panel").forEach(function (p) { var on = p.id === t.getAttribute("data-target"); p.hidden = !on; p.classList.toggle("is-active", on); });
+      track("cta_click", { cta_location: "amenity_tab", cta_label: (t.textContent || "").trim().slice(0, 40) });
+    });
+  });
+
+  /* ---------- location tabs ---------- */
+  var locTabs = Array.prototype.slice.call(document.querySelectorAll(".loc-tab"));
+  locTabs.forEach(function (t) {
+    t.addEventListener("click", function () {
+      locTabs.forEach(function (o) { o.classList.toggle("is-active", o === t); o.setAttribute("aria-selected", o === t ? "true" : "false"); });
+      document.querySelectorAll(".loc-panel").forEach(function (p) { var on = p.id === t.getAttribute("data-target"); p.hidden = !on; p.classList.toggle("is-active", on); });
+      track("cta_click", { cta_location: "location_tab", cta_label: (t.textContent || "").trim().slice(0, 40) });
+    });
+  });
+
+  /* ---------- action bar: show after the hero ---------- */
+  var bar = document.querySelector(".action-bar");
+  var hero = document.querySelector(".hero");
+  if (bar) bar.classList.add("is-visible");
+  /* Desktop: the hero already has the form, phone and EOI button, so the bar waits until the hero is scrolled past. */
+  if (bar && hero && "IntersectionObserver" in window) {
+    new IntersectionObserver(function (en) { bar.classList.toggle("over-hero", en[0].isIntersecting && en[0].intersectionRatio > 0.25); }, { threshold: [0, 0.25, 0.5] }).observe(hero);
+  }
+})();
+
+/* ---------- header section menu ---------- */
+(function () {
+  var nav = document.getElementById("site-nav"), btn = document.querySelector(".nav-toggle");
+  if (!nav) return;
+  function setOpen(open) { nav.classList.toggle("is-open", open); if (btn) { btn.setAttribute("aria-expanded", open ? "true" : "false"); btn.setAttribute("aria-label", open ? "Close menu" : "Open menu"); } }
+  if (btn) btn.addEventListener("click", function () { setOpen(!nav.classList.contains("is-open")); });
+  nav.addEventListener("click", function (e) {
+    var a = e.target.closest("a"); if (!a) return;
+    setOpen(false);
+    if (window.dataLayer) window.dataLayer.push({ event: "nav_click", section: a.getAttribute("href").slice(1) });
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
+  document.addEventListener("click", function (e) { if (!nav.contains(e.target) && btn && !btn.contains(e.target)) setOpen(false); });
+  var links = Array.prototype.slice.call(nav.querySelectorAll("a"));
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        links.forEach(function (l) { l.classList.toggle("is-active", l.getAttribute("href") === "#" + en.target.id); });
+      });
+    }, { rootMargin: "-45% 0px -50% 0px" });
+    links.forEach(function (l) { var s = document.querySelector(l.getAttribute("href")); if (s) io.observe(s); });
+  }
+})();
